@@ -1,24 +1,25 @@
 import asyncio
+import configparser
+import datetime
+import itertools
 import json
 import os
 import re
-import datetime
-from datetime import timezone
-from dataclasses import dataclass, field
-from typing import Any, Union, final
-import numpy as np
-import configparser
 import ssl
-import itertools
+from dataclasses import dataclass, field
+from datetime import timezone
+from typing import Any, Union, final
 
-from lightrag.types import KnowledgeGraph, KnowledgeGraphNode, KnowledgeGraphEdge
-
+import numpy as np
+import pipmaster as pm
 from tenacity import (
     retry,
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
 )
+
+from lightrag.types import KnowledgeGraph, KnowledgeGraphEdge, KnowledgeGraphNode
 
 from ..base import (
     BaseGraphStorage,
@@ -28,19 +29,16 @@ from ..base import (
     DocStatus,
     DocStatusStorage,
 )
-from ..namespace import NameSpace, is_namespace
-from ..utils import logger
 from ..constants import GRAPH_FIELD_SEP
 from ..kg.shared_storage import get_data_init_lock, get_graph_db_lock, get_storage_lock
-
-import pipmaster as pm
+from ..namespace import NameSpace, is_namespace
+from ..utils import logger
 
 if not pm.is_installed("asyncpg"):
     pm.install("asyncpg")
 
 import asyncpg  # type: ignore
 from asyncpg import Pool  # type: ignore
-
 from dotenv import load_dotenv
 
 # use the .env that is inside the current folder
@@ -1766,9 +1764,9 @@ class PGKVStorage(BaseKVStorage):
                     "cache_type": v.get(
                         "cache_type", "extract"
                     ),  # Get cache_type from data
-                    "queryparam": json.dumps(v.get("queryparam"))
-                    if v.get("queryparam")
-                    else None,
+                    "queryparam": (
+                        json.dumps(v.get("queryparam")) if v.get("queryparam") else None
+                    ),
                 }
 
                 await self.db.execute(upsert_sql, _data)
@@ -3104,7 +3102,10 @@ class PGGraphStorage(BaseGraphStorage):
         query = """SELECT * FROM cypher('%s', $$
                      MATCH (n:base {entity_id: "%s"})
                      RETURN count(n) > 0 AS node_exists
-                   $$) AS (node_exists bool)""" % (self.graph_name, entity_name_label)
+                   $$) AS (node_exists bool)""" % (
+            self.graph_name,
+            entity_name_label,
+        )
 
         single_result = (await self._query(query))[0]
 
@@ -3134,7 +3135,10 @@ class PGGraphStorage(BaseGraphStorage):
         query = """SELECT * FROM cypher('%s', $$
                      MATCH (n:base {entity_id: "%s"})
                      RETURN n
-                   $$) AS (n agtype)""" % (self.graph_name, label)
+                   $$) AS (n agtype)""" % (
+            self.graph_name,
+            label,
+        )
         record = await self._query(query)
         if record:
             node = record[0]
@@ -3158,7 +3162,10 @@ class PGGraphStorage(BaseGraphStorage):
         query = """SELECT * FROM cypher('%s', $$
                      MATCH (n:base {entity_id: "%s"})-[r]-()
                      RETURN count(r) AS total_edge_count
-                   $$) AS (total_edge_count integer)""" % (self.graph_name, label)
+                   $$) AS (total_edge_count integer)""" % (
+            self.graph_name,
+            label,
+        )
         record = (await self._query(query))[0]
         if record:
             edge_count = int(record["total_edge_count"])
@@ -3332,7 +3339,10 @@ class PGGraphStorage(BaseGraphStorage):
         query = """SELECT * FROM cypher('%s', $$
                      MATCH (n:base {entity_id: "%s"})
                      DETACH DELETE n
-                   $$) AS (n agtype)""" % (self.graph_name, label)
+                   $$) AS (n agtype)""" % (
+            self.graph_name,
+            label,
+        )
 
         try:
             await self._query(query, readonly=False)
@@ -3354,7 +3364,10 @@ class PGGraphStorage(BaseGraphStorage):
                      MATCH (n:base)
                      WHERE n.entity_id IN [%s]
                      DETACH DELETE n
-                   $$) AS (n agtype)""" % (self.graph_name, node_id_list)
+                   $$) AS (n agtype)""" % (
+            self.graph_name,
+            node_id_list,
+        )
 
         try:
             await self._query(query, readonly=False)
@@ -3376,7 +3389,11 @@ class PGGraphStorage(BaseGraphStorage):
             query = """SELECT * FROM cypher('%s', $$
                          MATCH (a:base {entity_id: "%s"})-[r]-(b:base {entity_id: "%s"})
                          DELETE r
-                       $$) AS (r agtype)""" % (self.graph_name, src_label, tgt_label)
+                       $$) AS (r agtype)""" % (
+                self.graph_name,
+                src_label,
+                tgt_label,
+            )
 
             try:
                 await self._query(query, readonly=False)
@@ -3387,7 +3404,9 @@ class PGGraphStorage(BaseGraphStorage):
                 logger.error(f"[{self.workspace}] Error during edge deletion: {str(e)}")
                 raise
 
-    async def get_nodes_batch(self, node_ids: list[str], batch_size: int = 1000) -> dict[str, dict]:
+    async def get_nodes_batch(
+        self, node_ids: list[str], batch_size: int = 1000
+    ) -> dict[str, dict]:
         """
         Retrieve multiple nodes in one query using UNWIND.
 
@@ -3453,7 +3472,9 @@ class PGGraphStorage(BaseGraphStorage):
 
         return nodes_dict
 
-    async def node_degrees_batch(self, node_ids: list[str], batch_size: int = 500) -> dict[str, int]:
+    async def node_degrees_batch(
+        self, node_ids: list[str], batch_size: int = 500
+    ) -> dict[str, int]:
         """
         Retrieve the degree for multiple nodes in a single query using UNWIND.
         Calculates the total degree by counting distinct relationships.
@@ -3482,7 +3503,7 @@ class PGGraphStorage(BaseGraphStorage):
         in_degrees = {}
 
         for i in range(0, len(unique_ids), batch_size):
-            batch = unique_ids[i:i + batch_size]
+            batch = unique_ids[i : i + batch_size]
 
             query = f"""
                     WITH input(v, ord) AS (
@@ -3602,7 +3623,7 @@ class PGGraphStorage(BaseGraphStorage):
         edges_dict: dict[tuple[str, str], dict] = {}
 
         for i in range(0, len(uniq_pairs), batch_size):
-            batch = uniq_pairs[i:i + batch_size]
+            batch = uniq_pairs[i : i + batch_size]
 
             pairs = [{"src": p["src"], "tgt": p["tgt"]} for p in batch]
 
@@ -3709,7 +3730,7 @@ class PGGraphStorage(BaseGraphStorage):
         edges_norm: dict[str, list[tuple[str, str]]] = {n: [] for n in unique_ids}
 
         for i in range(0, len(unique_ids), batch_size):
-            batch = unique_ids[i:i + batch_size]
+            batch = unique_ids[i : i + batch_size]
             # Format node IDs for the query
             formatted_ids = ", ".join([f'"{n}"' for n in batch])
 
@@ -3904,7 +3925,10 @@ class PGGraphStorage(BaseGraphStorage):
         query = """SELECT * FROM cypher('%s', $$
                     MATCH (n:base {entity_id: "%s"})
                     RETURN id(n) as node_id, n
-                  $$) AS (node_id bigint, n agtype)""" % (self.graph_name, label)
+                  $$) AS (node_id bigint, n agtype)""" % (
+            self.graph_name,
+            label,
+        )
 
         node_result = await self._query(query)
         if not node_result or not node_result[0].get("n"):

@@ -771,7 +771,7 @@ class LightRAG:
         self,
         node_label: str,
         max_depth: int = 3,
-        max_nodes: int = None,
+        max_nodes: int | None = None,
     ) -> KnowledgeGraph:
         """Get knowledge graph for a given label
 
@@ -820,7 +820,7 @@ class LightRAG:
 
     def insert(
         self,
-        input: str | list[str],
+        documents: str | list[str],
         split_by_character: str | None = None,
         split_by_character_only: bool = False,
         ids: str | list[str] | None = None,
@@ -830,7 +830,7 @@ class LightRAG:
         """Sync Insert documents with checkpoint support
 
         Args:
-            input: Single document string or list of document strings
+            documents: Single document string or list of document strings
             split_by_character: if split_by_character is not None, split the string by character, if chunk longer than
             chunk_token_size, it will be split again by token size.
             split_by_character_only: if split_by_character_only is True, split the string by character only, when
@@ -845,7 +845,7 @@ class LightRAG:
         loop = always_get_an_event_loop()
         return loop.run_until_complete(
             self.ainsert(
-                input,
+                documents,
                 split_by_character,
                 split_by_character_only,
                 ids,
@@ -856,7 +856,7 @@ class LightRAG:
 
     async def ainsert(
         self,
-        input: str | list[str],
+        documents: str | list[str],
         split_by_character: str | None = None,
         split_by_character_only: bool = False,
         ids: str | list[str] | None = None,
@@ -866,7 +866,7 @@ class LightRAG:
         """Async Insert documents with checkpoint support
 
         Args:
-            input: Single document string or list of document strings
+            documents: Single document string or list of document strings
             split_by_character: if split_by_character is not None, split the string by character, if chunk longer than
             chunk_token_size, it will be split again by token size.
             split_by_character_only: if split_by_character_only is True, split the string by character only, when
@@ -882,7 +882,7 @@ class LightRAG:
         if track_id is None:
             track_id = generate_track_id("insert")
 
-        await self.apipeline_enqueue_documents(input, ids, file_paths, track_id)
+        await self.apipeline_enqueue_documents(documents, ids, file_paths, track_id)
         await self.apipeline_process_enqueue_documents(
             split_by_character, split_by_character_only
         )
@@ -1861,7 +1861,7 @@ class LightRAG:
     def query(
         self,
         query: str,
-        param: QueryParam = QueryParam(),
+        param: QueryParam | None = None,
         system_prompt: str | None = None,
     ) -> str | Iterator[str]:
         """
@@ -1882,7 +1882,7 @@ class LightRAG:
     async def aquery(
         self,
         query: str,
-        param: QueryParam = QueryParam(),
+        param: QueryParam | None = None,
         system_prompt: str | None = None,
     ) -> str | AsyncIterator[str]:
         """
@@ -1900,43 +1900,46 @@ class LightRAG:
         # If a custom model is provided in param, temporarily update global config
         global_config = asdict(self)
 
-        if param.mode in ["local", "global", "hybrid", "mix"]:
+        # Use a local QueryParam instance if none was provided to avoid shared mutable defaults
+        p = param or QueryParam()
+
+        if p.mode in ["local", "global", "hybrid", "mix"]:
             response = await kg_query(
                 query.strip(),
                 self.chunk_entity_relation_graph,
                 self.entities_vdb,
                 self.relationships_vdb,
                 self.text_chunks,
-                param,
+                p,
                 global_config,
                 hashing_kv=self.llm_response_cache,
                 system_prompt=system_prompt,
                 chunks_vdb=self.chunks_vdb,
             )
-        elif param.mode == "naive":
+        elif p.mode == "naive":
             response = await naive_query(
                 query.strip(),
                 self.chunks_vdb,
-                param,
+                p,
                 global_config,
                 hashing_kv=self.llm_response_cache,
                 system_prompt=system_prompt,
             )
-        elif param.mode == "bypass":
+        elif p.mode == "bypass":
             # Bypass mode: directly use LLM without knowledge retrieval
-            use_llm_func = param.model_func or global_config["llm_model_func"]
+            use_llm_func = p.model_func or global_config["llm_model_func"]
             # Apply higher priority (8) to entity/relation summary tasks
             use_llm_func = partial(use_llm_func, _priority=8)
 
-            param.stream = True if param.stream is None else param.stream
+            p.stream = True if p.stream is None else p.stream
             response = await use_llm_func(
                 query.strip(),
                 system_prompt=system_prompt,
-                history_messages=param.conversation_history,
-                stream=param.stream,
+                history_messages=p.conversation_history,
+                stream=p.stream,
             )
         else:
-            raise ValueError(f"Unknown mode {param.mode}")
+            raise ValueError(f"Unknown mode {p.mode}")
         await self._query_done()
         return response
 
